@@ -1,0 +1,100 @@
+# routes.py
+from flask import request, jsonify
+from app import app, db, bcrypt
+from models import User
+from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
+
+# Test route
+@app.route('/')
+def home():
+    return "Auth Backend is running!"
+
+# REGISTER route
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    try:
+        data = request.get_json()
+        print(f"📝 Registration attempt for: {data.get('email')}")
+        
+        # Get data from request
+        name = data.get('name')
+        email = data.get('email')
+        password = data.get('password')
+
+        # Validate input
+        if not all([name, email, password]):
+            return jsonify({"msg": "Missing name, email, or password"}), 400
+
+        # Check if user already exists
+        if User.query.filter_by(email=email).first():
+            return jsonify({"msg": "Email already registered"}), 409
+
+        # Hash password and create user
+        password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
+        new_user = User(name=name, email=email, password_hash=password_hash)
+        
+        # Save to database
+        db.session.add(new_user)
+        db.session.commit()
+        
+        print(f"✅ User {email} registered successfully!")
+        return jsonify({"msg": "User registered successfully"}), 201
+        
+    except Exception as e:
+        print(f"❌ Registration error: {e}")
+        db.session.rollback()
+        return jsonify({"msg": "Registration failed"}), 500
+
+# LOGIN route
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        password = data.get('password')
+
+        if not email or not password:
+            return jsonify({"msg": "Missing email or password"}), 400
+
+        # Find user
+        user = User.query.filter_by(email=email).first()
+
+        if user and bcrypt.check_password_hash(user.password_hash, password):
+            # Create JWT token
+            access_token = create_access_token(identity=user.id)
+            return jsonify({
+                "access_token": access_token,
+                "user": {
+                    "id": user.id,
+                    "name": user.name,
+                    "email": user.email
+                }
+            }), 200
+        
+        return jsonify({"msg": "Invalid email or password"}), 401
+        
+    except Exception as e:
+        print(f"❌ Login error: {e}")
+        return jsonify({"msg": "Login failed"}), 500
+
+# PROFILE route (protected)
+@app.route('/api/profile', methods=['GET'])
+@jwt_required()
+def profile():
+    try:
+        current_user_id = get_jwt_identity()
+        user = User.query.get(current_user_id)
+
+        if not user:
+            return jsonify({"msg": "User not found"}), 404
+            
+        return jsonify({
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "member_since": user.created_at.strftime('%Y-%m-%d')
+        })
+        
+    except Exception as e:
+        print(f"❌ Profile error: {e}")
+        return jsonify({"msg": "Could not fetch profile"}), 500
